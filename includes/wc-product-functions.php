@@ -106,6 +106,11 @@ function wc_delete_product_transients( $post_id = 0 ) {
 		foreach( $post_transient_names as $transient ) {
 			$transients_to_clear[] = $transient . $post_id;
 		}
+
+		// Does this product have a parent?
+		if ( $parent_id = wp_get_post_parent_id( $post_id ) ) {
+			wc_delete_product_transients( $parent_id );
+		}
 	}
 
 	// Delete transients
@@ -696,4 +701,32 @@ function wc_get_product_cat_ids( $product_id ) {
 	}
 
 	return $product_cats;
+}
+
+/**
+ * Gets data about an attachment, such as alt text and captions.
+ * @since 2.6.0
+ * @param object|bool $product
+ * @return array
+ */
+function wc_get_product_attachment_props( $attachment_id, $product = false ) {
+	$props = array(
+		'title'   => '',
+		'caption' => '',
+		'url'     => '',
+		'alt'     => '',
+	);
+	if ( $attachment_id ) {
+		$attachment       = get_post( $attachment_id );
+		$props['title']   = trim( strip_tags( $attachment->post_title ) );
+		$props['caption'] = trim( strip_tags( $attachment->post_excerpt ) );
+		$props['url']     = wp_get_attachment_url( $attachment_id );
+		$props['alt']     = trim( strip_tags( get_post_meta( $attachment_id, '_wp_attachment_image_alt', true ) ) );
+
+		// Alt text fallbacks
+		$props['alt']     = empty( $props['alt'] ) ? $props['caption'] : $props['alt'];
+		$props['alt']     = empty( $props['alt'] ) ? trim( strip_tags( $attachment->post_title ) ) : $props['alt'];
+		$props['alt']     = empty( $props['alt'] ) && $product ? trim( strip_tags( get_the_title( $product->ID ) ) ) : $props['alt'];
+	}
+	return $props;
 }

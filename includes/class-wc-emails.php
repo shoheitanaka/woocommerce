@@ -336,7 +336,7 @@ class WC_Emails {
 			'orderNumber'    => strval( $order->get_order_number() ),
 			'priceCurrency'  => $order->get_order_currency(),
 			'price'          => $order->get_total(),
-			'acceptedOffer'  => count( $accepted_offers ) > 1 ? $accepted_offers : $accepted_offers[0],
+			'acceptedOffer'  => $accepted_offers,
 			'url'            => $order->get_view_order_url(),
 		);
 
@@ -373,7 +373,7 @@ class WC_Emails {
 
 		$markup = apply_filters( 'woocommerce_email_order_schema_markup', $markup, $sent_to_admin, $order );
 
-		echo '<script type="application/ld+json">' . wp_json_encode( (object) $markup ) . '</script>';
+		echo '<div style="display:none;"><script type="application/ld+json">' . wp_json_encode( (object) $markup ) . '</script></div>';
 	}
 
 	/**
@@ -552,7 +552,7 @@ class WC_Emails {
 		}
 
 		$subject = sprintf( '[%s] %s', $this->get_blogname(), __( 'Product Backorder', 'woocommerce' ) );
-		$message = sprintf( __( '%s units of %s have been backordered in order #%s.', 'woocommerce' ), $quantity, html_entity_decode( strip_tags( $product->get_formatted_name() ), ENT_QUOTES, get_bloginfo( 'charset' ) ), $order->get_order_number() );
+		$message = sprintf( __( '%1$s units of %2$s have been backordered in order #%3$s.', 'woocommerce' ), $quantity, html_entity_decode( strip_tags( $product->get_formatted_name() ), ENT_QUOTES, get_bloginfo( 'charset' ) ), $order->get_order_number() );
 
 		wp_mail(
 			apply_filters( 'woocommerce_email_recipient_backorder', get_option( 'woocommerce_stock_email_recipient' ), $args ),

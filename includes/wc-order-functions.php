@@ -215,7 +215,7 @@ function wc_is_order_status( $maybe_status ) {
  *
  * @since  2.2
  * @param  mixed $the_order Post object or post ID of the order.
- * @return WC_Order
+ * @return WC_Order|WC_Refund
  */
 function wc_get_order( $the_order = false ) {
 	if ( ! did_action( 'woocommerce_init' ) ) {
@@ -604,7 +604,12 @@ function wc_delete_order_item( $item_id ) {
  * @return bool
  */
 function wc_update_order_item_meta( $item_id, $meta_key, $meta_value, $prev_value = '' ) {
-	return update_metadata( 'order_item', $item_id, $meta_key, $meta_value, $prev_value );
+	if ( update_metadata( 'order_item', $item_id, $meta_key, $meta_value, $prev_value ) ) {
+		$cache_key = WC_Cache_Helper::get_cache_prefix( 'orders' ) . 'item_meta_array_' . $item_id;
+		wp_cache_delete( $cache_key, 'orders' );
+		return true;
+	}
+	return false;
 }
 
 /**
@@ -615,10 +620,15 @@ function wc_update_order_item_meta( $item_id, $meta_key, $meta_value, $prev_valu
  * @param mixed $meta_key
  * @param mixed $meta_value
  * @param bool $unique (default: false)
- * @return bool
+ * @return int New row ID or 0
  */
 function wc_add_order_item_meta( $item_id, $meta_key, $meta_value, $unique = false ) {
-	return add_metadata( 'order_item', $item_id, $meta_key, $meta_value, $unique );
+	if ( $meta_id = add_metadata( 'order_item', $item_id, $meta_key, $meta_value, $unique ) ) {
+		$cache_key = WC_Cache_Helper::get_cache_prefix( 'orders' ) . 'item_meta_array_' . $item_id;
+		wp_cache_delete( $cache_key, 'orders' );
+		return $meta_id;
+	}
+	return 0;
 }
 
 /**
@@ -632,7 +642,12 @@ function wc_add_order_item_meta( $item_id, $meta_key, $meta_value, $unique = fal
  * @return bool
  */
 function wc_delete_order_item_meta( $item_id, $meta_key, $meta_value = '', $delete_all = false ) {
-	return delete_metadata( 'order_item', $item_id, $meta_key, $meta_value, $delete_all );
+	if ( delete_metadata( 'order_item', $item_id, $meta_key, $meta_value, $delete_all ) ) {
+		$cache_key = WC_Cache_Helper::get_cache_prefix( 'orders' ) . 'item_meta_array_' . $item_id;
+		wp_cache_delete( $cache_key, 'orders' );
+		return true;
+	}
+	return false;
 }
 
 /**
@@ -704,18 +719,29 @@ function wc_processing_order_count() {
  * @return int
  */
 function wc_orders_count( $status ) {
-	$count = 0;
+	global $wpdb;
 
+	$count = 0;
+	$status = 'wc-' . $status;
 	$order_statuses = array_keys( wc_get_order_statuses() );
 
-	if ( ! in_array( 'wc-' . $status, $order_statuses ) ) {
+	if ( ! in_array( $status, $order_statuses ) ) {
 		return 0;
 	}
 
-	foreach ( wc_get_order_types( 'order-count' ) as $type ) {
-		$this_count  = wp_count_posts( $type, 'readable' );
-		$count      += isset( $this_count->{'wc-' . $status} ) ? $this_count->{'wc-' . $status} : 0;
+	$cache_key = WC_Cache_Helper::get_cache_prefix( 'orders' ) . $status;
+	$cached_count = wp_cache_get( $cache_key, 'counts' );
+
+	if ( false !== $cached_count ) {
+		return $cached_count;
 	}
+
+	foreach ( wc_get_order_types( 'order-count' ) as $type ) {
+		$query = "SELECT COUNT( * ) FROM {$wpdb->posts} WHERE post_type = %s AND post_status = %s";
+		$count += $wpdb->get_var( $wpdb->prepare( $query, $type, $status ) );
+	}
+
+	wp_cache_set( $cache_key, $count, 'counts' );
 
 	return $count;
 }
@@ -866,12 +892,7 @@ function wc_create_refund( $args = array() ) {
 							wc_add_order_item_meta( $new_item_id, '_refunded_item_id', $refund_item_id );
 						break;
 						case 'shipping' :
-							$shipping        = new stdClass();
-							$shipping->label = $order_items[ $refund_item_id ]['name'];
-							$shipping->id    = $order_items[ $refund_item_id ]['method_id'];
-							$shipping->cost  = wc_format_refund_total( $refund_item['refund_total'] );
-							$shipping->taxes = array_map( 'wc_format_refund_total', $refund_item['refund_tax'] );
-
+							$shipping    = new WC_Shipping_Rate( $order_items[ $refund_item_id ]['method_id'], $order_items[ $refund_item_id ]['name'], wc_format_refund_total( $refund_item['refund_total'] ), array_map( 'wc_format_refund_total', $refund_item['refund_tax'] ), $order_items[ $refund_item_id ]['method_id'] );
 							$new_item_id = $refund->add_shipping( $shipping );
 							wc_add_order_item_meta( $new_item_id, '_refunded_item_id', $refund_item_id );
 						break;
@@ -961,7 +982,7 @@ function wc_order_fully_refunded( $order_id ) {
 	}
 
 	// Create the refund object
-	$refund = wc_create_refund( array(
+	wc_create_refund( array(
 		'amount'     => $max_refund,
 		'reason'     => __( 'Order Fully Refunded', 'woocommerce' ),
 		'order_id'   => $order_id,
@@ -971,3 +992,76 @@ function wc_order_fully_refunded( $order_id ) {
 	wc_delete_shop_order_transients( $order_id );
 }
 add_action( 'woocommerce_order_status_refunded', 'wc_order_fully_refunded' );
+
+/**
+ * Search in orders.
+ *
+ * @since  2.6.0
+ * @param  string $term Term to search.
+ * @return array List of orders ID.
+ */
+function wc_order_search( $term ) {
+	global $wpdb;
+
+	$term     = str_replace( 'Order #', '', wc_clean( $term ) );
+	$post_ids = array();
+
+	// Search fields.
+	$search_fields = array_map( 'wc_clean', apply_filters( 'woocommerce_shop_order_search_fields', array(
+		'_order_key',
+		'_billing_company',
+		'_billing_address_1',
+		'_billing_address_2',
+		'_billing_city',
+		'_billing_postcode',
+		'_billing_country',
+		'_billing_state',
+		'_billing_email',
+		'_billing_phone',
+		'_shipping_address_1',
+		'_shipping_address_2',
+		'_shipping_city',
+		'_shipping_postcode',
+		'_shipping_country',
+		'_shipping_state'
+	) ) );
+
+	// Search orders.
+	if ( is_numeric( $term ) ) {
+		$post_ids = array_unique( array_merge(
+			$wpdb->get_col(
+				$wpdb->prepare( "SELECT DISTINCT p1.post_id FROM {$wpdb->postmeta} p1 WHERE p1.meta_key IN ('" . implode( "','", array_map( 'esc_sql', $search_fields ) ) . "') AND p1.meta_value LIKE '%%%s%%';", wc_clean( $term ) )
+			),
+			array( absint( $term ) )
+		) );
+	} elseif ( ! empty( $search_fields ) ) {
+		$post_ids = array_unique( array_merge(
+			$wpdb->get_col(
+				$wpdb->prepare( "
+					SELECT DISTINCT p1.post_id
+					FROM {$wpdb->postmeta} p1
+					INNER JOIN {$wpdb->postmeta} p2 ON p1.post_id = p2.post_id
+					WHERE
+						( p1.meta_key = '_billing_first_name' AND p2.meta_key = '_billing_last_name' AND CONCAT(p1.meta_value, ' ', p2.meta_value) LIKE '%%%s%%' )
+					OR
+						( p1.meta_key = '_shipping_first_name' AND p2.meta_key = '_shipping_last_name' AND CONCAT(p1.meta_value, ' ', p2.meta_value) LIKE '%%%s%%' )
+					OR
+						( p1.meta_key IN ('" . implode( "','", array_map( 'esc_sql', $search_fields ) ) . "') AND p1.meta_value LIKE '%%%s%%' )
+					",
+					$term, $term, $term
+				)
+			),
+			$wpdb->get_col(
+				$wpdb->prepare( "
+					SELECT order_id
+					FROM {$wpdb->prefix}woocommerce_order_items as order_items
+					WHERE order_item_name LIKE '%%%s%%'
+					",
+					$term
+				)
+			)
+		) );
+	}
+
+	return $post_ids;
+}

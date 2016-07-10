@@ -149,7 +149,7 @@ class WC_Shortcodes {
 	}
 
 	/**
-	 * Cart shortcode.
+	 * My account page shortcode.
 	 *
 	 * @param mixed $atts
 	 * @return string
@@ -168,8 +168,8 @@ class WC_Shortcodes {
 		$atts = shortcode_atts( array(
 			'per_page' => '12',
 			'columns'  => '4',
-			'orderby'  => 'title',
-			'order'    => 'desc',
+			'orderby'  => 'menu_order title',
+			'order'    => 'asc',
 			'category' => '',  // Slugs
 			'operator' => 'IN' // Possible values are 'IN', 'NOT IN', 'AND'.
 		), $atts );
@@ -267,9 +267,6 @@ class WC_Shortcodes {
 
 		ob_start();
 
-		// Reset loop/columns globals when starting a new loop
-		$woocommerce_loop['loop'] = $woocommerce_loop['column'] = '';
-
 		if ( $product_categories ) {
 			woocommerce_product_loop_start();
 
@@ -351,14 +348,14 @@ class WC_Shortcodes {
 			);
 
 			// Ignore catalog visibility
-			$query_args['meta_query'] = WC()->query->stock_status_meta_query();
+			$query_args['meta_query'] = array_merge( $query_args['meta_query'], WC()->query->stock_status_meta_query() );
 		}
 
 		if ( ! empty( $atts['ids'] ) ) {
 			$query_args['post__in'] = array_map( 'trim', explode( ',', $atts['ids'] ) );
 
 			// Ignore catalog visibility
-			$query_args['meta_query'] = WC()->query->stock_status_meta_query();
+			$query_args['meta_query'] = array_merge( $query_args['meta_query'], WC()->query->stock_status_meta_query() );
 		}
 
 		return self::product_loop( $query_args, $atts, 'products' );
@@ -527,7 +524,9 @@ class WC_Shortcodes {
 			'per_page' => '12',
 			'columns'  => '4',
 			'orderby'  => 'title',
-			'order'    => 'asc'
+			'order'    => 'asc',
+			'category' => '', // Slugs
+			'operator' => 'IN' // Possible values are 'IN', 'NOT IN', 'AND'.
 		), $atts );
 
 		$query_args = array(
@@ -540,6 +539,8 @@ class WC_Shortcodes {
 			'meta_query'     => WC()->query->get_meta_query(),
 			'post__in'       => array_merge( array( 0 ), wc_get_product_ids_on_sale() )
 		);
+
+		$query_args = self::_maybe_add_category_args( $query_args, $atts['category'], $atts['operator'] );
 
 		return self::product_loop( $query_args, $atts, 'sale_products' );
 	}
@@ -816,6 +817,9 @@ class WC_Shortcodes {
 		), $atts );
 
 		ob_start();
+
+		// Rename arg
+		$atts['posts_per_page'] = absint( $atts['per_page'] );
 
 		woocommerce_related_products( $atts );
 

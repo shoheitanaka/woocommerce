@@ -43,6 +43,12 @@ abstract class WC_Settings_API {
 	public $form_fields = array();
 
 	/**
+	 * The posted settings data. When empty, $_POST data will be used.
+	 * @var array
+	 */
+	protected $data = array();
+
+	/**
 	 * Get the form fields after they are initialized.
 	 * @return array of options
 	 */
@@ -54,7 +60,7 @@ abstract class WC_Settings_API {
 	 * Set default required properties for each field.
 	 * @param array
 	 */
-	private function set_defaults( $field ) {
+	protected function set_defaults( $field ) {
 		if ( ! isset( $field['default'] ) ) {
 			$field['default'] = '';
 		}
@@ -67,6 +73,17 @@ abstract class WC_Settings_API {
 	public function admin_options() {
 		echo '<table class="form-table">' . $this->generate_settings_html( $this->get_form_fields(), false ) . '</table>';
 	}
+
+	/**
+	 * Initialise settings form fields.
+	 *
+	 * Add an array of fields to be displayed
+	 * on the gateway's settings screen.
+	 *
+	 * @since  1.0.0
+	 * @return string
+	 */
+	public function init_form_fields() {}
 
 	/**
 	 * Return the name of the option in the WP DB.
@@ -123,17 +140,34 @@ abstract class WC_Settings_API {
 	}
 
 	/**
+	 * Sets the POSTed data. This method can be used to set specific data, instead
+	 * of taking it from the $_POST array.
+	 * @param array data
+	 */
+	public function set_post_data( $data = array() ) {
+		$this->data = $data;
+	}
+
+	/**
+	 * Returns the POSTed data, to be used to save the settings.
+	 * @return array
+	 */
+	public function get_post_data() {
+		if ( ! empty( $this->data ) && is_array( $this->data ) ) {
+			return $this->data;
+		}
+		return $_POST;
+	}
+
+	/**
 	 * Processes and saves options.
 	 * If there is an error thrown, will continue to save and validate fields, but will leave the erroring field out.
-	 * @param  array $post_data Defaults to $_POST but can be passed in.
 	 * @return bool was anything saved?
 	 */
-	public function process_admin_options( $post_data = array() ) {
+	public function process_admin_options() {
 		$this->init_settings();
 
-		if ( empty( $post_data ) ) {
-			$post_data = $_POST;
-		}
+		$post_data = $this->get_post_data();
 
 		foreach ( $this->get_form_fields() as $key => $field ) {
 			if ( 'title' !== $this->get_field_type( $field ) ) {
@@ -203,7 +237,7 @@ abstract class WC_Settings_API {
 	 *
 	 * @param  string $key
 	 * @param  mixed  $empty_value
-	 * @return mixed  The value specified for the option or a default value for the option.
+	 * @return string The value specified for the option or a default value for the option.
 	 */
 	public function get_option( $key, $empty_value = null ) {
 		if ( empty( $this->settings ) ) {

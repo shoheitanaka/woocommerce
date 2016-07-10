@@ -19,6 +19,7 @@ class WC_Form_Handler {
 	 * Hook in methods.
 	 */
 	public static function init() {
+		add_action( 'template_redirect', array( __CLASS__, 'redirect_reset_password_link' ) );
 		add_action( 'template_redirect', array( __CLASS__, 'save_address' ) );
 		add_action( 'template_redirect', array( __CLASS__, 'save_account_details' ) );
 		add_action( 'wp_loaded', array( __CLASS__, 'checkout_action' ), 20 );
@@ -34,6 +35,21 @@ class WC_Form_Handler {
 		// May need $wp global to access query vars.
 		add_action( 'wp', array( __CLASS__, 'pay_action' ), 20 );
 		add_action( 'wp', array( __CLASS__, 'add_payment_method_action' ), 20 );
+		add_action( 'wp', array( __CLASS__, 'delete_payment_method_action' ), 20 );
+		add_action( 'wp', array( __CLASS__, 'set_default_payment_method_action' ), 20 );
+	}
+
+	/**
+	 * Remove key and login from querystring, set cookie, and redirect to account page to show the form.
+	 */
+	public static function redirect_reset_password_link() {
+		if ( is_account_page() && ! empty( $_GET['key'] ) && ! empty( $_GET['login'] ) ) {
+			$value = sprintf( '%s:%s', wp_unslash( $_GET['login'] ), wp_unslash( $_GET['key'] ) );
+			WC_Shortcode_My_Account::set_reset_password_cookie( $value );
+
+			wp_safe_redirect( add_query_arg( 'show-reset-form', 'true', wc_lostpassword_url() ) );
+			exit;
+		}
 	}
 
 	/**
@@ -379,6 +395,82 @@ class WC_Form_Handler {
 	}
 
 	/**
+	 * Process the delete payment method form.
+	 */
+	public static function delete_payment_method_action() {
+		global $wp;
+
+		if ( isset( $wp->query_vars['delete-payment-method'] ) ) {
+
+			$token_id = absint( $wp->query_vars['delete-payment-method'] );
+			$token = WC_Payment_Tokens::get( $token_id );
+			$delete = true;
+
+			if ( is_null( $token ) ) {
+				wc_add_notice( __( 'Invalid payment method', 'woocommerce' ), 'error' );
+				$delete = false;
+			}
+
+			if ( get_current_user_id() !== $token->get_user_id() ) {
+				wc_add_notice( __( 'Invalid payment method', 'woocommerce' ), 'error' );
+				$delete = false;
+			}
+
+			if ( false === wp_verify_nonce( $_REQUEST['_wpnonce'], 'delete-payment-method-' . $token_id ) ) {
+				wc_add_notice( __( 'Invalid payment method', 'woocommerce' ), 'error' );
+				$delete = false;
+			}
+
+			if ( $delete ) {
+				WC_Payment_Tokens::delete( $token_id );
+				wc_add_notice( __( 'Payment method deleted.', 'woocommerce' ) );
+			}
+
+			wp_redirect( wc_get_account_endpoint_url( 'payment-methods' ) );
+			exit();
+		}
+
+	}
+
+	/**
+	 * Process the delete payment method form.
+	 */
+	public static function set_default_payment_method_action() {
+		global $wp;
+
+		if ( isset( $wp->query_vars['set-default-payment-method'] ) ) {
+
+			$token_id = absint( $wp->query_vars['set-default-payment-method'] );
+			$token = WC_Payment_Tokens::get( $token_id );
+			$delete = true;
+
+			if ( is_null( $token ) ) {
+				wc_add_notice( __( 'Invalid payment method', 'woocommerce' ), 'error' );
+				$delete = false;
+			}
+
+			if ( get_current_user_id() !== $token->get_user_id() ) {
+				wc_add_notice( __( 'Invalid payment method', 'woocommerce' ), 'error' );
+				$delete = false;
+			}
+
+			if ( false === wp_verify_nonce( $_REQUEST['_wpnonce'], 'set-default-payment-method-' . $token_id ) ) {
+				wc_add_notice( __( 'Invalid payment method', 'woocommerce' ), 'error' );
+				$delete = false;
+			}
+
+			if ( $delete ) {
+				WC_Payment_Tokens::set_users_default( $token->get_user_id(), intval( $token_id ) );
+				wc_add_notice( __( 'This payment method was successfully set as your default.', 'woocommerce' ) );
+			}
+
+			wp_redirect( wc_get_account_endpoint_url( 'payment-methods' ) );
+			exit();
+		}
+
+	}
+
+	/**
 	 * Remove from cart/update.
 	 */
 	public static function update_cart_action() {
@@ -406,11 +498,13 @@ class WC_Form_Handler {
 
 				// Don't show undo link if removed item is out of stock.
 				if ( $product->is_in_stock() && $product->has_enough_stock( $cart_item['quantity'] ) ) {
-					$undo = WC()->cart->get_undo_url( $cart_item_key );
-					wc_add_notice( sprintf( __( '%s removed. %sUndo?%s', 'woocommerce' ), $item_removed_title, '<a href="' . esc_url( $undo ) . '">', '</a>' ) );
+					$removed_notice  = sprintf( __( '%s removed.', 'woocommerce' ), $item_removed_title );
+					$removed_notice .= ' <a href="' . esc_url( WC()->cart->get_undo_url( $cart_item_key ) ) . '">' . __( 'Undo?', 'woocommerce' ) . '</a>';
 				} else {
-					wc_add_notice( sprintf( __( '%s removed.', 'woocommerce' ), $item_removed_title ) );
+					$removed_notice = sprintf( __( '%s removed.', 'woocommerce' ), $item_removed_title );
 				}
+
+				wc_add_notice( $removed_notice );
 			}
 
 			$referer  = wp_get_referer() ? remove_query_arg( array( 'remove_item', 'add-to-cart', 'added-to-cart' ), add_query_arg( 'removed_item', '1', wp_get_referer() ) ) : wc_get_cart_url();
@@ -713,7 +807,13 @@ class WC_Form_Handler {
 		$missing_attributes = array();
 		$variations         = array();
 		$attributes         = $adding_to_cart->get_attributes();
-		$variation          = wc_get_product( $variation_id );
+
+		// If no variation ID is set, attempt to get a variation ID from posted attributes.
+		if ( empty( $variation_id ) ) {
+			$variation_id = $adding_to_cart->get_matching_variation( wp_unslash( $_POST ) );
+		}
+
+		$variation = wc_get_product( $variation_id );
 
 		// Verify all attributes
 		foreach ( $attributes as $attribute ) {
@@ -747,7 +847,7 @@ class WC_Form_Handler {
 			}
 		}
 
-		if ( $missing_attributes ) {
+		if ( ! empty( $missing_attributes ) ) {
 			wc_add_notice( sprintf( _n( '%s is a required field', '%s are required fields', sizeof( $missing_attributes ), 'woocommerce' ), wc_format_list_of_items( $missing_attributes ) ), 'error' );
 		} elseif ( empty( $variation_id ) ) {
 			wc_add_notice( __( 'Please choose product options&hellip;', 'woocommerce' ), 'error' );
@@ -767,7 +867,10 @@ class WC_Form_Handler {
 	 * Process the login form.
 	 */
 	public static function process_login() {
-		if ( ! empty( $_POST['login'] ) && ! empty( $_POST['_wpnonce'] ) && wp_verify_nonce( $_POST['_wpnonce'], 'woocommerce-login' ) ) {
+		$nonce_value = isset( $_POST['_wpnonce'] ) ? $_POST['_wpnonce'] : '';
+		$nonce_value = isset( $_POST['woocommerce-login-nonce'] ) ? $_POST['woocommerce-login-nonce'] : $nonce_value;
+
+		if ( ! empty( $_POST['login'] ) && wp_verify_nonce( $nonce_value, 'woocommerce-login' ) ) {
 
 			try {
 				$creds    = array();
@@ -820,17 +923,12 @@ class WC_Form_Handler {
 						$redirect = wc_get_page_permalink( 'myaccount' );
 					}
 
-					// Feedback
-					wc_add_notice( sprintf( __( 'You are now logged in as <strong>%s</strong>', 'woocommerce' ), $user->display_name ) );
-
 					wp_redirect( apply_filters( 'woocommerce_login_redirect', $redirect, $user ) );
 					exit;
 				}
 
-			} catch (Exception $e) {
-
+			} catch ( Exception $e ) {
 				wc_add_notice( apply_filters('login_errors', $e->getMessage() ), 'error' );
-
 			}
 		}
 	}
@@ -840,7 +938,13 @@ class WC_Form_Handler {
 	 */
 	public static function process_lost_password() {
 		if ( isset( $_POST['wc_reset_password'] ) && isset( $_POST['user_login'] ) && isset( $_POST['_wpnonce'] ) && wp_verify_nonce( $_POST['_wpnonce'], 'lost_password' ) ) {
-			WC_Shortcode_My_Account::retrieve_password();
+			$success = WC_Shortcode_My_Account::retrieve_password();
+
+			// If successful, redirect to my account with query arg set
+			if ( $success ) {
+				wp_redirect( add_query_arg( 'reset-link-sent', 'true', remove_query_arg( array( 'key', 'login', 'reset' ) ) ) );
+				exit;
+			}
 		}
 	}
 
@@ -883,7 +987,7 @@ class WC_Form_Handler {
 
 				do_action( 'woocommerce_customer_reset_password', $user );
 
-				wp_redirect( add_query_arg( 'reset', 'true', remove_query_arg( array( 'key', 'login' ) ) ) );
+				wp_redirect( add_query_arg( 'reset', 'true', remove_query_arg( array( 'key', 'login', 'reset-link-sent' ) ) ) );
 				exit;
 			}
 		}
@@ -893,7 +997,10 @@ class WC_Form_Handler {
 	 * Process the registration form.
 	 */
 	public static function process_registration() {
-		if ( ! empty( $_POST['register'] ) && isset( $_POST['_wpnonce'] ) && wp_verify_nonce( $_POST['_wpnonce'], 'woocommerce-register' ) ) {
+		$nonce_value = isset( $_POST['_wpnonce'] ) ? $_POST['_wpnonce'] : '';
+		$nonce_value = isset( $_POST['woocommerce-register-nonce'] ) ? $_POST['woocommerce-register-nonce'] : $nonce_value;
+
+		if ( ! empty( $_POST['register'] ) && wp_verify_nonce( $nonce_value, 'woocommerce-register' ) ) {
 			$username = 'no' === get_option( 'woocommerce_registration_generate_username' ) ? $_POST['username'] : '';
 			$password = 'no' === get_option( 'woocommerce_registration_generate_password' ) ? $_POST['password'] : '';
 			$email    = $_POST['email'];

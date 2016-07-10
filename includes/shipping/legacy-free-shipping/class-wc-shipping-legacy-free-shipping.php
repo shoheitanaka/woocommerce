@@ -28,10 +28,22 @@ class WC_Shipping_Legacy_Free_Shipping extends WC_Shipping_Method {
 	public function __construct() {
 		$this->id 			= 'legacy_free_shipping';
 		$this->method_title = __( 'Free Shipping (Legacy)', 'woocommerce' );
-		$this->method_description = sprintf( __( '<strong>This method is deprecated in 2.6.0 and will be removed in future versions - we recommend disabling it and instead setting up a new rate within your <a href="%s">Shipping Zones</a>.</strong>', 'woocommerce' ), admin_url( 'admin.php?page=wc-shipping' ) );
+		$this->method_description = sprintf( __( '<strong>This method is deprecated in 2.6.0 and will be removed in future versions - we recommend disabling it and instead setting up a new rate within your <a href="%s">Shipping Zones</a>.</strong>', 'woocommerce' ), admin_url( 'admin.php?page=wc-settings&tab=shipping' ) );
 		$this->init();
 	}
 
+	/**
+	 * Process and redirect if disabled.
+	 */
+	public function process_admin_options() {
+		parent::process_admin_options();
+
+		if ( 'no' === $this->settings[ 'enabled' ] ) {
+			wp_redirect( admin_url( 'admin.php?page=wc-settings&tab=shipping&section=options' ) );
+			exit;
+		}
+	}
+	
 	/**
 	 * Return the name of the option in the WP DB.
 	 * @since 2.6.0
@@ -208,10 +220,11 @@ class WC_Shipping_Legacy_Free_Shipping extends WC_Shipping_Method {
 	 */
 	public function calculate_shipping( $package = array() ) {
 		$args = array(
-			'id' 	=> $this->id,
-			'label' => $this->title,
-			'cost' 	=> 0,
-			'taxes' => false
+			'id' 	  => $this->id,
+			'label'   => $this->title,
+			'cost' 	  => 0,
+			'taxes'   => false,
+			'package' => $package,
 		);
 		$this->add_rate( $args );
 	}

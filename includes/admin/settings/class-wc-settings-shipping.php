@@ -127,25 +127,21 @@ class WC_Settings_Shipping extends WC_Settings_Page {
 		// Load shipping methods so we can show any global options they may have
 		$shipping_methods = WC()->shipping->load_shipping_methods();
 
-		if ( 'options' === $current_section ) {
+		if ( '' === $current_section ) {
+			$this->output_zones_screen();
+		} elseif ( 'options' === $current_section ) {
 			$settings = $this->get_settings();
 			WC_Admin_Settings::output_fields( $settings );
-			return;
 		} elseif ( 'classes' === $current_section ) {
 			$hide_save_button = true;
 			$this->output_shipping_class_screen();
-			return;
 		} else {
 			foreach ( $shipping_methods as $method ) {
 				if ( in_array( $current_section, array( $method->id, sanitize_title( get_class( $method ) ) ) ) && $method->has_settings() ) {
 					$method->admin_options();
-					return;
 				}
 			}
 		}
-
-		// Default to zones screen
-		$this->output_zones_screen();
 	}
 
 	/**
@@ -200,7 +196,7 @@ class WC_Settings_Shipping extends WC_Settings_Page {
 	protected function zone_methods_screen( $zone_id ) {
 		$wc_shipping      = WC_Shipping      ::instance();
 		$zone             = WC_Shipping_Zones::get_zone( $zone_id );
-		$shipping_methods = $wc_shipping ->get_shipping_methods();
+		$shipping_methods = $wc_shipping->get_shipping_methods();
 
 		if ( ! $zone ) {
 			wp_die( __( 'Zone does not exist!', 'woocommerce' ) );
@@ -228,20 +224,24 @@ class WC_Settings_Shipping extends WC_Settings_Page {
 	 * Show zones
 	 */
 	protected function zones_screen() {
+		global $wpdb;
+
 		$allowed_countries = WC()->countries->get_allowed_countries();
-        $continents        = WC()->countries->get_continents();
+		$continents        = WC()->countries->get_continents();
+		$method_count      = wc_get_shipping_method_count();
 
 		wp_localize_script( 'wc-shipping-zones', 'shippingZonesLocalizeScript', array(
-            'zones'         => WC_Shipping_Zones::get_zones(),
-            'default_zone'  => array(
+			'zones'         => WC_Shipping_Zones::get_zones(),
+			'default_zone'  => array(
 				'zone_id'    => 0,
 				'zone_name'  => '',
 				'zone_order' => null,
 			),
 			'wc_shipping_zones_nonce'  => wp_create_nonce( 'wc_shipping_zones_nonce' ),
 			'strings'       => array(
-				'unload_confirmation_msg' => __( 'Your changed data will be lost if you leave this page without saving.', 'woocommerce' ),
-				'save_failed'             => __( 'Your changes were not saved. Please retry.', 'woocommerce' ),
+				'unload_confirmation_msg'     => __( 'Your changed data will be lost if you leave this page without saving.', 'woocommerce' ),
+				'save_failed'                 => __( 'Your changes were not saved. Please retry.', 'woocommerce' ),
+				'no_shipping_methods_offered' => __( 'No shipping methods offered to this zone.', 'woocommerce' ),
 			),
 		) );
 		wp_enqueue_script( 'wc-shipping-zones' );
@@ -286,19 +286,27 @@ class WC_Settings_Shipping extends WC_Settings_Page {
 	protected function output_shipping_class_screen() {
 		$wc_shipping = WC_Shipping::instance();
 		wp_localize_script( 'wc-shipping-classes', 'shippingClassesLocalizeScript', array(
-            'classes'         => $wc_shipping->get_shipping_classes(),
-            'default_shipping_class'  => array(
+			'classes'         => $wc_shipping->get_shipping_classes(),
+			'default_shipping_class'  => array(
 				'term_id'     => 0,
 				'name'        => '',
 				'description' => '',
 			),
-			'wc_shipping_classes_nonce'  => wp_create_nonce( 'wc_shipping_classes_nonce' ),
+			'wc_shipping_classes_nonce' => wp_create_nonce( 'wc_shipping_classes_nonce' ),
 			'strings'       => array(
 				'unload_confirmation_msg' => __( 'Your changed data will be lost if you leave this page without saving.', 'woocommerce' ),
 				'save_failed'             => __( 'Your changes were not saved. Please retry.', 'woocommerce' )
 			),
 		) );
 		wp_enqueue_script( 'wc-shipping-classes' );
+
+		// Extendable columns to show on the shipping classes screen.
+		$shipping_class_columns = apply_filters( 'woocommerce_shipping_classes_columns', array(
+			'wc-shipping-class-name'        => __( 'Shipping Class', 'woocommerce' ),
+			'wc-shipping-class-slug'        => __( 'Slug', 'woocommerce' ),
+			'wc-shipping-class-description' => __( 'Description', 'woocommerce' ),
+			'wc-shipping-class-count'       => __( 'Product Count', 'woocommerce' ),
+		) );
 
 		include_once( 'views/html-admin-page-shipping-classes.php' );
 	}
